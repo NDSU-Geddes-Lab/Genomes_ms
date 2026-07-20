@@ -1,0 +1,119 @@
+#!/bin/bash
+#PBS -N Plasmid_sauras_assembly
+#PBS -q default
+#PBS -l select=1:ncpus=32:mem=64gb
+#PBS -l walltime=48:00:00
+#PBS -j oe
+#PBS -m abe
+#PBS -J 60-80
+#PBS -M first.last@ndsu.edu
+#PBS -W group_list=x-ccast-prj-bgeddes
+#PBS -J 1-7
+
+#### USER VARIABLES ####
+BASE_DIR=/mmfs1/projects/barney.geddes/tania.gupta/genomes_rawa_data/redo
+OUT_BASE=$BASE_DIR/assemblies
+GENOME_SIZE=7.2m      # e.g. "7.2m" for 7.2 Mb
+THREADS=16
+#### END VARIABLES ####
+
+# turn off “unset var” errors around conda activate
+set +u
+source "$HOME/miniconda3/etc/profile.d/conda.sh"
+conda activate ~/assembly_env || { echo "ERROR: Cannot activate assembly_env" >&2; exit 1; }
+set -u
+
+# ensure racon is available
+if ! command -v racon &>/dev/null; then
+  conda install -y -c bioconda racon || { echo "ERROR: racon install failed" >&2; exit 1; }
+fi
+
+# gather all P10* sample dirs
+mapfile -t SAMPLES < <(ls -d "$BASE_DIR"/P* 2>/dev/null)
+(( ${#SAMPLES[@]} )) || { echo "ERROR: no P* in $BASE_DIR" >&2; exit 1; }
+
+# pick this sample
+IDX=$((PBS_ARRAY_INDEX-1))
+SAMPDIR=${SAMPLES[$IDX]}
+SAMPLE=$(basename "$SAMPDIR")
+echo "---- Processing $SAMPLE ----"
+
+# make working dir
+WD="$OUT_BASE/$SAMPLE"
+mkdir -p "$WD" && cd "$WD"
+
+# find reads
+RAW=$(ls "$SAMPDIR"/reads/*fastq.gz 2>/dev/null | head -n1)
+[[ -r "$RAW" ]] || { echo "ERROR: no FASTQ in $SAMPDIR/reads" >&2; exit 1; }
+echo "[0] reads → $RAW"
+
+# convert GENOME_SIZE to integer
+if [[ $GENOME_SIZE =~ ^([0-9]+)\.([0-9]+)m$ ]]; then
+  GBASES=$((BASH_REMATCH[1]*1000000 + BASH_REMATCH[2]*100000))
+elif [[ $GENOME_SIZE =~ ^([0-9]+)m$ ]]; then
+  GBASES=$((BASH_REMATCH[1]*1000000))
+else
+  echo "ERROR: bad GENOME_SIZE" >&2; exit 1
+fi
+
+T250=$((250*1000000))
+T100=$((GBASES*100))
+
+# 1) filtlong → 250 Mb
+echo "[1] filtlong"
+filtlong --keep_percent 95 --target_bases $T250 "$RAW" \
+  > ${SAMPLE}.filtlong.250mb.fastq
+
+# 2) minimap2+miniasm → rough.fasta
+echo "[2] miniasm rough"
+minimap2 -x ava-ont -t $THREADS \
+  ${SAMPLE}.filtlong.250mb.fastq \
+  ${SAMPLE}.filtlong.250mb.fastq \
+  > overlaps.paf
+
+miniasm -f ${SAMPLE}.filtlong.250mb.fastq overlaps.paf > rough.gfa
+awk '/^S/ {print ">"$2"\n"$3}' rough.gfa > rough.fasta
+[[ -s rough.fasta ]] || { echo "ERROR: rough.fasta empty" >&2; exit 1; }
+
+# 3) re‑downsample → ~100×
+echo "[3] re-downsample"
+TOTAL=$(awk 'NR%4==2{sum+=length($0)}END{print sum}' ${SAMPLE}.filtlong.250mb.fastq)
+if (( TOTAL >= T100 )); then
+  filtlong --mean_q_weight 10 --target_bases $T100 \
+    ${SAMPLE}.filtlong.250mb.fastq \
+    > ${SAMPLE}.filtlong.100x.fastq
+else
+  cp ${SAMPLE}.filtlong.250mb.fastq ${SAMPLE}.filtlong.100x.fastq
+fi
+[[ -s ${SAMPLE}.filtlong.100x.fastq ]] || { echo "ERROR: 100× FASTQ missing" >&2; exit 1; }
+
+# 4) Flye assembly
+echo "[4] flye"
+flye --nano-raw ${SAMPLE}.filtlong.100x.fastq \
+     --out-dir flye_out \
+     --threads $THREADS \
+     --genome-size $GBASES
+
+# 5) Racon polishing
+echo "[5] racon"
+minimap2 -x map-ont -t $THREADS flye_out/assembly.fasta \
+         ${SAMPLE}.filtlong.100x.fastq \
+  > racon.paf
+
+racon -t $THREADS \
+  ${SAMPLE}.filtlong.100x.fastq \
+  racon.paf \
+  flye_out/assembly.fasta \
+  > racon_consensus.fasta
+
+# 6) Medaka polishing
+echo "[6] medaka"
+medaka_consensus \
+  -i ${SAMPLE}.filtlong.100x.fastq \
+  -d racon_consensus.fasta \
+  -o medaka_out \
+  -t 2 \
+  -m r941_min_high_g303
+
+echo "[$(date)] $SAMPLE complete"
+ls -lh rough.fasta flye_out/assembly.fasta racon_consensus.fasta medaka_out/consensus.fasta

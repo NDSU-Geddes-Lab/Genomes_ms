@@ -1,0 +1,31 @@
+#!/bin/bash
+#PBS -N mafft_align
+#PBS -q default
+#PBS -l select=1:ncpus=16:mem=16gb
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#PBS -m abe
+#PBS -M tania.gupta@ndsu.edu
+#PBS -W group_list=x-ccast-prj-bgeddes
+
+set -eo pipefail
+
+WORKDIR="/mmfs1/projects/barney.geddes/tania.gupta/TG_comparitive_genomics/phylogenetic_tree_replicons/psyma_repabc/rename_headers_step2"
+ENV_NAME="mafft_env"   # your env that has MAFFT
+THREADS="${PBS_NP:-16}"
+IN="all_seqs.fasta"
+OUT="all_seqs.aligned.fasta"
+
+# Load conda *shim* only; no activate/deactivate
+# (try miniforge if miniconda isn't there)
+source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
+source ~/miniforge3/etc/profile.d/conda.sh
+
+cd "$WORKDIR"
+
+# Run MAFFT via conda run (avoids env activation & deactivate hooks)
+conda run -n "$ENV_NAME" mafft --version
+conda run -n "$ENV_NAME" mafft --thread "$THREADS" --auto --reorder --adjustdirectionaccurately \
+  "$IN" > "$OUT" 2> mafft.stderr.log
+
+echo "[INFO] Alignment complete -> $OUT"

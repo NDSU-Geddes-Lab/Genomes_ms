@@ -1,0 +1,32 @@
+#!/bin/bash
+#PBS -N eggnog_accessory
+#PBS -q condo07
+#PBS -l select=1:ncpus=32:mem=32gb
+#PBS -l walltime=24:00:00
+#PBS -j oe
+#PBS -m abe
+#PBS -M tania.gupta@ndsu.edu
+#PBS -W group_list=x-ccast-prj-bgeddes
+
+# Go to working directory
+cd /mmfs1/projects/barney.geddes/tania.gupta/TG_comparitive_genomics/accessory/prokka_out_no_distinct_clade/accessory_functional_categories_clean
+
+# Activate conda environment
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate eggnog_env
+
+# Make output directory
+mkdir -p eggnog_out
+
+# Check that emapper.py is available
+which emapper.py
+
+# Run eggNOG-mapper
+emapper.py \
+  -i all_accessory_proteins.faa \
+  --itype proteins \
+  -m diamond \
+  --cpu 8 \
+  --data_dir /mmfs1/projects/barney.geddes/tania.gupta/eggnog_db \
+  -o accessory_plasmids_eggnog \
+  --output_dir eggnog_out

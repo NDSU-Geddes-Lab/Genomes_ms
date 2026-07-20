@@ -1,0 +1,187 @@
+1. Started with Scoary pan-GWAS results
+	annotate-hits_functional_category_step1.R- run this script it will do-
+Your file:
+
+result.tsv
+
+contained the genes significantly associated with the phenotype, in this case competitiveness. This file had information such as:
+
+Gene
+odds_ratio
+p-values
+effect
+
+You used the odds ratio to classify genes as either positively or negatively associated with the phenotype:
+
+effect = if_else(odds_ratio > 1, "positive", "negative")
+
+So genes with odds_ratio > 1 were treated as positively associated with competitiveness, and genes with odds_ratio < 1 were treated as negatively associated.
+
+2. Joined Scoary hits with Roary gene presence/absence table
+
+Your Roary file:
+
+gene_presence_absence.csv
+
+contains the pan-genome clusters across all strains. Importantly, it has:
+
+Gene
+Annotation
+TG171
+
+The Gene column identifies the Roary gene cluster, the Annotation column gives the predicted function, and the TG171 column gives the actual TG171 locus/gene ID present in that cluster.
+
+You joined Scoary and Roary using:
+
+left_join(roary_results, by = "Gene")
+
+This allowed you to ask:
+
+For each competitiveness-associated Roary gene cluster, what is the actual TG171 gene ID and annotation?
+
+The output was:
+
+TG171_Scoary_hits_with_Roary_annotation.tsv
+
+This file contained columns like:
+
+Gene
+TG171_gene_hit
+Annotation
+effect
+odds_ratio
+3. Extracted the TG171 gene IDs
+
+From the joined table, you extracted only the TG171 gene IDs and saved them as:
+
+TG171_hit_gene_ids.txt
+
+This file contained the actual locus IDs for the competition-associated genes in TG171.
+
+
+
+
+4. Extracted protein sequences for those TG171 genes
+
+Then transferred the TG171 protein FASTA file:
+
+TG171.faa
+
+and extracted only the proteins corresponding to your hit genes:
+
+seqkit grep -f TG171_hit_gene_ids.txt TG171.faa > TG171_hits.faa
+
+This created:
+
+TG171_hits.faa
+
+This file contained only the protein sequences of TG171 competition-associated candidate genes.
+
+This step was important because functional classification tools like eggNOG work best from protein sequences, not just gene names.
+
+5. Ran eggNOG-mapper
+
+You then ran eggNOG-mapper on:
+
+TG171_hits.faa
+
+using the eggNOG database and DIAMOND search:
+frist Activate eggNOG environment using :
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate eggnog_env
+
+and then
+
+emapper.py \
+  -i TG171_hits.faa \
+  --itype proteins \
+  -m diamond \
+  --cpu 8 \
+  --data_dir /mmfs1/projects/barney.geddes/tania.gupta/eggnog_db \
+  -o TG171_hits_eggnog \
+  --output_dir TG171_eggnog_out
+
+eggNOG-mapper compared your TG171 hit proteins to orthologous groups and assigned predicted functions, including:
+
+Preferred_name
+Description
+GOs
+EC
+KEGG_ko
+KEGG_Pathway
+COG_category
+PFAMs
+
+The main output file was:
+
+TG171_hits_eggnog.emapper.annotations
+6. Used the COG_category column
+
+The functional-category information came from the column:
+
+COG_category
+
+This column uses single-letter COG codes. For example:
+
+K = Transcription
+G = Carbohydrate transport and metabolism
+T = Signal transduction mechanisms
+N = Cell motility
+M = Cell wall/membrane/envelope biogenesis
+V = Defense mechanisms
+S = Function unknown
+
+Some genes had more than one category, such as:
+
+EGP
+ET
+IQ
+
+These mean the gene was assigned to multiple functional categories. For example:
+
+EGP = Amino acid transport/metabolism + carbohydrate transport/metabolism + inorganic ion transport/metabolism
+ET = Amino acid transport/metabolism + signal transduction
+IQ = Lipid transport/metabolism + secondary metabolite transport/catabolism
+7. Converted COG letters into readable functional names
+
+Then the COG letters were mapped to full category names. For example:
+
+K → Transcription
+G → Carbohydrate transport and metabolism
+T → Signal transduction mechanisms
+N → Cell motility
+I → Lipid transport and metabolism
+Q → Secondary metabolites biosynthesis, transport and catabolism
+
+For multi-letter categories, each letter was counted separately. That means a gene annotated as EGP contributed one count to:
+
+E = Amino acid transport and metabolism
+G = Carbohydrate transport and metabolism
+P = Inorganic ion transport and metabolism
+
+Because of this, the plot shows functional category assignments, not necessarily the exact number of unique genes.
+
+8. Generated the functional category plot
+
+Finally, you counted how many competition-associated gene assignments belonged to each COG category and plotted them as a bar plot.
+
+That produced:
+
+TG171_competition_functional_category_plot.png
+
+and the count table:
+
+TG171_competition_functional_category_counts.tsv
+How to explain this in your manuscript
+
+You can write it like this:
+
+To functionally classify competition-associated candidate genes, Scoary pan-GWAS hits were joined with the Roary gene presence/absence matrix to identify the corresponding TG171 gene IDs and Roary annotations. The TG171-specific protein sequences for these candidate genes were extracted from the TG171 protein FASTA file and analyzed using eggNOG-mapper. Functional categories were assigned based on eggNOG COG classifications, and multi-category assignments were expanded so that each COG letter contributed to its corresponding functional class. The resulting category counts were used to summarize the major functional classes represented among competition-associated candidate genes.
+
+For the Results/Discussion:
+
+Functional categorization of TG171 competition-associated candidates showed representation of genes involved in transcription, carbohydrate transport and metabolism, amino acid transport and metabolism, signal transduction, cell motility, lipid metabolism, inorganic ion transport, defense mechanisms, and membrane/envelope-associated functions. These categories are consistent with traits that may contribute to rhizosphere fitness, substrate utilization, stress tolerance, and competitive nodule occupancy.
+
+And the important caution:
+
+Because these genes were identified by association-based pan-GWAS, the functional categories should be interpreted as candidate biological themes rather than direct evidence of causality.

@@ -1,0 +1,17 @@
+cd /mmfs1/projects/barney.geddes/tania.gupta/TG_comparitive_genomics/pSymB/Prokka_psymb_integrant_output
+
+echo -e "Strain\tReplicon\tLength_bp\tGC_percent" > psymb_gc_content.tsv
+
+for dir in *_pSymB; do
+    strain=$(basename "$dir" _pSymB)
+
+    fna=$(find "$dir" -maxdepth 1 -name "*.fna" | head -n 1)
+
+    if [[ -f "$fna" ]]; then
+        seqkit fx2tab -n -l -g "$fna" | \
+        awk -v strain="$strain" 'BEGIN{OFS="\t"} {print strain, $1, $2, $3}' \
+        >> psymb_gc_content.tsv
+    else
+        echo "WARNING: no .fna found in $dir"
+    fi
+done

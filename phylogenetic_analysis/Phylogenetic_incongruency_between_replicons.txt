@@ -1,0 +1,108 @@
+# ============================================================
+# Robinson–Foulds distance among replicon phylogenies
+# Chromosome vs pSymA vs pSymB
+# ============================================================
+
+library(ape)
+library(phangorn)
+
+# ---- Paths ----
+tree_dir <- "/Users/taniagupta/Desktop/genomes_paper/phylo_trees/mantel_test"
+
+tree_files <- c(
+  chromosome = file.path(tree_dir, "chromosome_85_integrant.aln.treefile"),
+  pSymA      = file.path(tree_dir, "psyma_85_integrant.aln.treefile"),
+  pSymB      = file.path(tree_dir, "psymb_85_integrant.aln.treefile")
+)
+
+# ---- Function to clean tip names ----
+# Converts names like TG174_chromosome, TG174_pSymA, TG174_pSymB to TG174
+clean_tip_names <- function(x) {
+  x <- trimws(x)
+  x <- sub(
+    "_(chromosome|chromsome|chr|p?syma|psym_a|p?symb|psym_b)$",
+    "",
+    x,
+    ignore.case = TRUE
+  )
+  return(x)
+}
+
+# ---- Read and clean trees ----
+trees <- lapply(tree_files, read.tree)
+
+for (i in names(trees)) {
+  trees[[i]]$tip.label <- clean_tip_names(trees[[i]]$tip.label)
+  
+  if (any(duplicated(trees[[i]]$tip.label))) {
+    cat("\nDuplicated tip labels in", i, "tree:\n")
+    print(trees[[i]]$tip.label[duplicated(trees[[i]]$tip.label)])
+    stop("Duplicate tip labels found after cleaning names.")
+  }
+}
+
+# ---- Find common strains ----
+common_tips <- Reduce(intersect, lapply(trees, function(tr) tr$tip.label))
+
+cat("Number of common tips:", length(common_tips), "\n")
+
+# Print missing strains from each tree
+all_tips <- Reduce(union, lapply(trees, function(tr) tr$tip.label))
+
+for (i in names(trees)) {
+  missing <- setdiff(all_tips, trees[[i]]$tip.label)
+  cat("\nMissing from", i, "tree:\n")
+  print(missing)
+}
+
+if (length(common_tips) < 5) {
+  stop("Too few common tips. Check strain names.")
+}
+
+# ---- Keep only common strains ----
+trees_common <- lapply(trees, function(tr) keep.tip(tr, common_tips))
+
+# Treat trees as unrooted for topology comparison
+trees_common <- lapply(trees_common, unroot)
+
+# ---- Calculate RF distances ----
+comparisons <- list(
+  "Chromosome_vs_pSymA" = c("chromosome", "pSymA"),
+  "Chromosome_vs_pSymB" = c("chromosome", "pSymB"),
+  "pSymA_vs_pSymB"      = c("pSymA", "pSymB")
+)
+
+rf_results <- data.frame()
+
+for (comp in names(comparisons)) {
+  
+  t1_name <- comparisons[[comp]][1]
+  t2_name <- comparisons[[comp]][2]
+  
+  t1 <- trees_common[[t1_name]]
+  t2 <- trees_common[[t2_name]]
+  
+  rf_raw <- RF.dist(t1, t2, normalize = FALSE, check.labels = TRUE)
+  rf_norm <- RF.dist(t1, t2, normalize = TRUE, check.labels = TRUE)
+  
+  rf_results <- rbind(
+    rf_results,
+    data.frame(
+      Comparison = comp,
+      RF_raw = rf_raw,
+      RF_normalized = rf_norm
+    )
+  )
+}
+
+cat("\n================ RF distance results ================\n")
+print(rf_results)
+
+write.csv(
+  rf_results,
+  file.path(tree_dir, "RF_distance_replicon_phylogenies.csv"),
+  row.names = FALSE
+)
+
+cat("\nResults saved to:\n")
+cat(file.path(tree_dir, "RF_distance_replicon_phylogenies.csv"), "\n")
