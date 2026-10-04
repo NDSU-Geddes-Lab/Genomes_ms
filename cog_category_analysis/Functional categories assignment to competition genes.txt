@@ -172,16 +172,5 @@ TG171_competition_functional_category_plot.png
 and the count table:
 
 TG171_competition_functional_category_counts.tsv
-How to explain this in your manuscript
 
-You can write it like this:
 
-To functionally classify competition-associated candidate genes, Scoary pan-GWAS hits were joined with the Roary gene presence/absence matrix to identify the corresponding TG171 gene IDs and Roary annotations. The TG171-specific protein sequences for these candidate genes were extracted from the TG171 protein FASTA file and analyzed using eggNOG-mapper. Functional categories were assigned based on eggNOG COG classifications, and multi-category assignments were expanded so that each COG letter contributed to its corresponding functional class. The resulting category counts were used to summarize the major functional classes represented among competition-associated candidate genes.
-
-For the Results/Discussion:
-
-Functional categorization of TG171 competition-associated candidates showed representation of genes involved in transcription, carbohydrate transport and metabolism, amino acid transport and metabolism, signal transduction, cell motility, lipid metabolism, inorganic ion transport, defense mechanisms, and membrane/envelope-associated functions. These categories are consistent with traits that may contribute to rhizosphere fitness, substrate utilization, stress tolerance, and competitive nodule occupancy.
-
-And the important caution:
-
-Because these genes were identified by association-based pan-GWAS, the functional categories should be interpreted as candidate biological themes rather than direct evidence of causality.
