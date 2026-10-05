@@ -1,0 +1,108 @@
+#!/bin/bash
+#PBS -N Genome_assesmbly
+#PBS -q default
+#PBS -l select=1:ncpus=16:mem=64gb
+#PBS -l walltime=48:00:00
+#PBS -j oe
+#PBS -m abe
+#PBS -M tania.gupta@ndsu.edu
+#PBS -W group_list=x-ccast-prj-bgeddes
+#PBS -J 1-4
+# ^ Must equal the number of TG*.fastq.gz files in BASE_DIR (currently 4).
+#   Task N assembles the Nth file in alphabetical order.
+
+# =============================================================================
+# Nanopore genome assembly, one sample per array task.
+#   Filtlong (95%, 250 Mb) -> Flye --nano-raw -> Racon x1 -> Medaka r941_min_high_g303
+# 
+# =============================================================================
+
+#### USER VARIABLES ####
+BASE_DIR=/mmfs1/projects/barney.geddes/tania.gupta/raw_data_genomes/raw_genomes/input_check
+OUT_BASE=$BASE_DIR/assemblies
+GENOME_SIZE=7.2m          # expected genome size
+THREADS=16                # matches ncpus requested above
+FLYE_MODE=--nano-raw      # matches old pipeline (--nano-hq is the R10 setting)
+MEDAKA_MODEL=r941_min_high_g303   # matches old pipeline; "" = auto-detect from reads
+MEDAKA_THREADS=2          # matches old pipeline (medaka uses 2 on CPU regardless)
+RUN_RACON=1               # 1 = one Racon round before medaka (original pipeline); 0 = skip
+#### END VARIABLES ####
+
+# --- Environment ------------------------------------------------------------
+set +u
+source "$HOME/miniconda3/etc/profile.d/conda.sh"
+conda activate ~/assembly_env || { echo "ERROR: cannot activate assembly_env" >&2; exit 1; }
+set -euo pipefail
+
+# Fail early (and clearly) if any tool is missing
+for tool in filtlong flye minimap2 medaka_consensus; do
+  command -v "$tool" >/dev/null || { echo "ERROR: $tool not found in env" >&2; exit 1; }
+done
+(( RUN_RACON )) && { command -v racon >/dev/null || { echo "ERROR: racon not found" >&2; exit 1; }; }
+echo "flye $(flye --version) | medaka $(medaka --version 2>&1 | tail -n1)"
+
+# --- Pick this task's sample -------------------------------------------------
+# Layout: one FASTQ per sample directly in BASE_DIR, e.g. TG102_raw_reads.fastq.gz
+: "${PBS_ARRAY_INDEX:?Submit with qsub (array job); PBS_ARRAY_INDEX is unset}"
+shopt -s nullglob
+SAMPLES=( "$BASE_DIR"/TG*.fastq.gz "$BASE_DIR"/TG*.fq.gz )
+(( ${#SAMPLES[@]} )) || { echo "ERROR: no TG*.fastq.gz files in $BASE_DIR" >&2; exit 1; }
+(( PBS_ARRAY_INDEX <= ${#SAMPLES[@]} )) || { echo "ERROR: task $PBS_ARRAY_INDEX > ${#SAMPLES[@]} samples" >&2; exit 1; }
+
+RAW=${SAMPLES[$((PBS_ARRAY_INDEX - 1))]}
+SAMPLE=$(basename "$RAW")
+SAMPLE=${SAMPLE%.gz}; SAMPLE=${SAMPLE%.fastq}; SAMPLE=${SAMPLE%.fq}
+SAMPLE=${SAMPLE%_raw_reads}                 # TG102_raw_reads.fastq.gz -> TG102
+echo "---- [$(date)] Processing $SAMPLE (task $PBS_ARRAY_INDEX of ${#SAMPLES[@]}) ----"
+echo "[0] reads -> $RAW"
+
+WD="$OUT_BASE/$SAMPLE"
+mkdir -p "$WD" && cd "$WD"
+
+# PBS array jobs get TMPDIR like /var/tmp/pbs.123[1].host; TensorFlow (medaka)
+# treats the [1] as a glob and can't load its model. Use a bracket-free tmp dir.
+export TMPDIR="$WD/tmp"
+mkdir -p "$TMPDIR"
+
+READS=${SAMPLE}.filtlong.fastq
+
+# --- Clean leftovers from previous failed runs -------------------------------
+rm -rf flye_out medaka_out racon.paf racon_consensus.fasta* "$READS"
+
+# --- 1) Filtlong -------------------------------------------------------------
+echo "[1] filtlong"
+filtlong --keep_percent 95 --target_bases 250000000 "$RAW" > "$READS"
+[[ -s "$READS" ]] || { echo "ERROR: filtlong output empty" >&2; exit 1; }
+
+# --- 2) Flye -----------------------------------------------------------------
+echo "[2] flye"
+flye $FLYE_MODE "$READS" \
+     --out-dir flye_out \
+     --threads "$THREADS" \
+     --genome-size "$GENOME_SIZE"
+DRAFT=flye_out/assembly.fasta
+
+# --- 3) Racon (optional) -----------------------------------------------------
+if (( RUN_RACON )); then
+  echo "[3] racon"
+  minimap2 -x map-ont -t "$THREADS" "$DRAFT" "$READS" > racon.paf
+  racon -t "$THREADS" "$READS" racon.paf "$DRAFT" > racon_consensus.fasta
+  DRAFT=racon_consensus.fasta
+else
+  echo "[3] racon skipped"
+fi
+
+# --- 4) Medaka ---------------------------------------------------------------
+echo "[4] medaka (draft: $DRAFT)"
+MODEL_ARG=()
+[[ -n "$MEDAKA_MODEL" ]] && MODEL_ARG=( -m "$MEDAKA_MODEL" )
+medaka_consensus \
+  -i "$READS" \
+  -d "$DRAFT" \
+  -o medaka_out \
+  -t "$MEDAKA_THREADS" \
+  -f \
+  "${MODEL_ARG[@]}"
+
+echo "[$(date)] $SAMPLE complete"
+ls -lh medaka_out/consensus.fasta
